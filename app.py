@@ -1,6 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
+
+# ==========================================
+# CONFIG
+# ==========================================
 
 st.set_page_config(
     page_title="Security Alerts Dashboard",
@@ -8,160 +13,260 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load Excel
-@st.cache_data
+# ==========================================
+# GOOGLE SHEET ID
+# ==========================================
+
+SHEET_ID = "1a3NsUwxRp63NYsX-9w2mk58J-3uS-kHKPcXJIYvpWjc"
+
+# ==========================================
+# LOAD DATA
+# ==========================================
+
+@st.cache_data(ttl=30)
 def load_data():
-    alerts = pd.read_excel("project alerts.xlsx", sheet_name="alerts")
-    usecases = pd.read_excel("project alerts.xlsx", sheet_name="usecases")
+
+    alerts_url = (
+        f"https://docs.google.com/spreadsheets/d/"
+        f"{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=alerts"
+    )
+
+    usecases_url = (
+        f"https://docs.google.com/spreadsheets/d/"
+        f"{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=usecases"
+    )
+
+    alerts = pd.read_csv(alerts_url)
+    usecases = pd.read_csv(usecases_url)
+
     return alerts, usecases
+
+# ==========================================
+# REFRESH SECTION
+# ==========================================
+
+col1, col2 = st.columns([1, 4])
+
+with col1:
+    if st.button("🔄 Refresh Data"):
+        st.cache_data.clear()
+        st.rerun()
+
+with col2:
+    st.success(
+        f"Last Updated: {datetime.now().strftime('%d-%b-%Y %H:%M:%S')}"
+    )
 
 alerts, usecases = load_data()
 
+# ==========================================
+# TITLE
+# ==========================================
+
 st.title("🚨 Security Alerts Dashboard")
 
-# ----------------------------
-# KPI SECTION
-# ----------------------------
+# ==========================================
+# KPI CALCULATIONS
+# ==========================================
 
 total_alerts = len(alerts)
-critical_alerts = len(alerts[alerts["Severity"] == "Critical"])
-high_alerts = len(alerts[alerts["Severity"] == "High"])
+
+critical_alerts = len(
+    alerts[
+        alerts["Severity"]
+        .astype(str)
+        .str.upper()
+        .eq("CRITICAL")
+    ]
+)
+
+high_alerts = len(
+    alerts[
+        alerts["Severity"]
+        .astype(str)
+        .str.upper()
+        .eq("HIGH")
+    ]
+)
 
 open_alerts = len(
     alerts[
-        alerts["Status"].isin(
-            ["In Progress", "Review", "Received"]
+        alerts["Status"]
+        .astype(str)
+        .isin(
+            [
+                "In Progress",
+                "Review",
+                "Received"
+            ]
         )
     ]
 )
 
-enabled_usecases = len(usecases[usecases["is_enabled"] == "T"])
+enabled_usecases = len(
+    usecases[
+        usecases["is_enabled"]
+        .astype(str)
+        .str.upper()
+        .eq("T")
+    ]
+)
 
-col1, col2, col3, col4, col5 = st.columns(5)
+# ==========================================
+# KPI CARDS
+# ==========================================
 
-col1.metric("Total Alerts", total_alerts)
-col2.metric("Critical", critical_alerts)
-col3.metric("High", high_alerts)
-col4.metric("Open Alerts", open_alerts)
-col5.metric("Enabled Use Cases", enabled_usecases)
+c1, c2, c3, c4, c5 = st.columns(5)
+
+c1.metric("Total Alerts", total_alerts)
+c2.metric("Critical Alerts", critical_alerts)
+c3.metric("High Alerts", high_alerts)
+c4.metric("Open Alerts", open_alerts)
+c5.metric("Enabled Use Cases", enabled_usecases)
 
 st.divider()
 
-# ----------------------------
+# ==========================================
 # FILTERS
-# ----------------------------
+# ==========================================
 
-col1, col2 = st.columns(2)
+st.sidebar.header("Filters")
 
-severity_filter = col1.multiselect(
+severity_filter = st.sidebar.multiselect(
     "Severity",
     alerts["Severity"].dropna().unique(),
     default=alerts["Severity"].dropna().unique()
 )
 
-status_filter = col2.multiselect(
+status_filter = st.sidebar.multiselect(
     "Status",
     alerts["Status"].dropna().unique(),
     default=alerts["Status"].dropna().unique()
 )
 
 filtered_alerts = alerts[
-    (alerts["Severity"].isin(severity_filter))
-    &
-    (alerts["Status"].isin(status_filter))
+    alerts["Severity"].isin(severity_filter)
 ]
 
-# ----------------------------
+filtered_alerts = filtered_alerts[
+    filtered_alerts["Status"].isin(status_filter)
+]
+
+# ==========================================
 # CHARTS
-# ----------------------------
+# ==========================================
 
-c1, c2 = st.columns(2)
+left, right = st.columns(2)
 
-with c1:
-    fig = px.pie(
+with left:
+
+    fig1 = px.pie(
         filtered_alerts,
         names="Severity",
-        title="Alerts by Severity"
+        title="Alerts By Severity"
     )
-    st.plotly_chart(fig, use_container_width=True)
 
-with c2:
-    status_count = filtered_alerts.groupby("Status").size().reset_index(name="Count")
+    st.plotly_chart(
+        fig1,
+        use_container_width=True
+    )
 
-    fig = px.bar(
+with right:
+
+    status_count = (
+        filtered_alerts
+        .groupby("Status")
+        .size()
+        .reset_index(name="Count")
+    )
+
+    fig2 = px.bar(
         status_count,
         x="Status",
         y="Count",
         color="Status",
-        title="Alerts by Status"
+        title="Alerts By Status"
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        fig2,
+        use_container_width=True
+    )
 
-# ----------------------------
-# CATEGORY CHART
-# ----------------------------
+# ==========================================
+# CATEGORY TREEMAP
+# ==========================================
 
 category_count = (
-    filtered_alerts.groupby("Category")
+    filtered_alerts
+    .groupby("Category")
     .size()
     .reset_index(name="Count")
 )
 
-fig = px.treemap(
+fig3 = px.treemap(
     category_count,
     path=["Category"],
     values="Count",
-    title="Alerts by Category"
+    title="Alerts By Category"
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(
+    fig3,
+    use_container_width=True
+)
 
-# ----------------------------
-# USE CASES
-# ----------------------------
+# ==========================================
+# USE CASE STATUS
+# ==========================================
 
 st.subheader("Use Case Status")
 
-usecases["Enabled Status"] = usecases["is_enabled"].apply(
-    lambda x: "Enabled" if x == "T" else "Disabled"
+usecases["Enabled Status"] = (
+    usecases["is_enabled"]
+    .astype(str)
+    .apply(
+        lambda x:
+        "Enabled"
+        if x.upper() == "T"
+        else "Disabled"
+    )
 )
 
-fig = px.pie(
+fig4 = px.pie(
     usecases,
     names="Enabled Status",
     title="Enabled vs Disabled Use Cases"
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(
+    fig4,
+    use_container_width=True
+)
 
-# ----------------------------
-# ALERT TABLE
-# ----------------------------
+# ==========================================
+# ALERTS TABLE
+# ==========================================
 
 st.subheader("Recent Alerts")
 
 st.dataframe(
-    filtered_alerts.sort_values(
-        "Observation Time",
-        ascending=False
-    ),
-    use_container_width=True
+    filtered_alerts,
+    use_container_width=True,
+    height=450
 )
 
-# ----------------------------
-# USE CASE TABLE
-# ----------------------------
+# ==========================================
+# DOWNLOAD CSV
+# ==========================================
 
-st.subheader("Use Cases")
+csv = filtered_alerts.to_csv(
+    index=False
+)
 
-st.dataframe(
-    usecases[
-        [
-            "Name",
-            "severity",
-            "is_enabled"
-        ]
-    ],
-    use_container_width=True
+st.download_button(
+    label="📥 Download Filtered Alerts",
+    data=csv,
+    file_name="filtered_alerts.csv",
+    mime="text/csv"
 )
